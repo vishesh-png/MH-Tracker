@@ -767,12 +767,10 @@ function renderWeekly() {
   // ---- Rows ----
   const wRow = (sec, label, numFn, fmtFn, opts = {}) => {
     const vals = agg.map(a => { const v = numFn(a); return v === null || !isFinite(v) ? null : v; });
-    const cells = agg.map((a, i) => {
-      // deltas live on W-1 (last completed week) vs W-2 — W-0 is partial
-      const extra = i === nW - 2 ? deltaHtml(vals[i], vals[i - 1], opts) : '';
-      return '<td' + (i === nW - 1 ? ' class="tot"' : '') + ' title="' + weekLabel(weeks[i].start) + '">' +
-        fmtFn(a) + extra + '</td>';
-    }).join('');
+    const cells = agg.map((a, i) =>
+      '<td' + (i === nW - 1 ? ' class="tot"' : '') + ' title="' + weekLabel(weeks[i].start) + '">' +
+      fmtFn(a) + '</td>'
+    ).join('');
     return '<tr class="sec-' + sec + '">' + '<td>' + label + '</td>' + cells +
       '<td>' + sparkline(vals) + '</td></tr>';
   };
