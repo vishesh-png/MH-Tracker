@@ -33,7 +33,30 @@
   }
   .tab.active { background: #1f2937; color: #fff; border-color: #1f2937; }
   th.h-wk { background: #eef1f6; font-size: 12.5px; white-space: nowrap; }
-  th.h-wk.cur { background: var(--blue-soft); color: #2563eb; border-radius: 0 10px 10px 0; }
+  th.h-wk.cur { background: var(--blue-soft); color: #2563eb; }
+  th.h-wk.trend { border-radius: 0 10px 10px 0; }
+
+  /* Weekly view: KPI tiles */
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; margin: 16px 0 22px; }
+  .kpi { border: 1px solid var(--border); border-radius: 12px; padding: 14px 18px; background: #fafbfd; }
+  .kpi .k-label { font-size: 11px; font-weight: 600; color: var(--ink-2); text-transform: uppercase; letter-spacing: .05em; }
+  .kpi .k-val { font-size: 26px; font-weight: 700; margin: 4px 0 2px; }
+  .kpi .k-delta { font-size: 12px; font-weight: 600; }
+  .kpi .k-sub { font-size: 11px; color: var(--ink-3); font-weight: 400; }
+  .delta-up { color: #16a34a; } .delta-down { color: #dc2626; } .delta-flat { color: var(--ink-3); }
+
+  /* Weekly table: sticky metric column, hover, collapsible sections */
+  #weeklyHead th:first-child, #weeklyBody td:first-child {
+    position: sticky; left: 0; z-index: 2; background: var(--card);
+  }
+  #weeklyHead th:first-child { background: var(--green-head); }
+  #weeklyBody tr.section-row td { background: #e8edf5; cursor: pointer; user-select: none; }
+  #weeklyBody tr.section-row:hover td { background: #dde5f0; }
+  #weeklyBody tr:not(.section-row):hover td { background: #f3f7ff; }
+  .chev { display: inline-block; margin-right: 8px; font-size: 10px; transition: transform .15s; color: var(--ink-2); }
+  tr.section-row.collapsed .chev { transform: rotate(-90deg); }
+  .spark { display: block; margin: 0 auto; }
+  td .delta-sub { display: block; font-size: 10.5px; font-weight: 600; margin-top: 3px; }
   body {
     font-family:'Poppins', -apple-system, 'Segoe UI', sans-serif;
     background: var(--bg); color: var(--ink);
@@ -277,6 +300,7 @@
           <h1>Week on Week — Funnel &amp; Components</h1>
         </div>
       </div>
+      <div class="kpis" id="weeklyKpis"></div>
       <div class="tbl-scroll">
         <table>
           <thead id="weeklyHead"></thead>
@@ -559,6 +583,45 @@ function weekLabel(startIso) {
   return f(startIso) + ' – ' + f(addDays(startIso, 6));
 }
 
+// Single-series trend sparkline (thin 2px line, dot on the latest week)
+function sparkline(vals) {
+  const nums = vals.filter(v => v !== null && isFinite(v));
+  if (!nums.length) return '';
+  const w = 96, h = 28, pad = 4;
+  const min = Math.min(...nums), max = Math.max(...nums);
+  const span = max - min || 1;
+  const pts = vals.map((v, i) => {
+    if (v === null || !isFinite(v)) return null;
+    const x = pad + i * (w - 2 * pad) / (vals.length - 1 || 1);
+    const y = h - pad - (v - min) / span * (h - 2 * pad);
+    return [x, y];
+  });
+  const line = pts.filter(Boolean).map(p => p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ');
+  const last = [...pts].reverse().find(Boolean);
+  return '<svg class="spark" width="96" height="28" viewBox="0 0 96 28" aria-hidden="true">' +
+    '<polyline points="' + line + '" fill="none" stroke="#2563eb" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="0.85"/>' +
+    (last ? '<circle cx="' + last[0].toFixed(1) + '" cy="' + last[1].toFixed(1) + '" r="3" fill="#2563eb"/>' : '') +
+    '</svg>';
+}
+
+// WoW delta chip. opts.pp = percentage-point metric; opts.invert = lower is better
+function deltaHtml(cur, prev, opts = {}) {
+  if (cur === null || prev === null || !isFinite(cur) || !isFinite(prev)) return '';
+  let d, txt;
+  if (opts.pp) {
+    d = Math.round(cur - prev);
+    txt = Math.abs(d) + ' pp';
+  } else {
+    if (prev === 0) return '';
+    d = Math.round((cur - prev) / prev * 100);
+    txt = Math.abs(d) + '%';
+  }
+  if (d === 0) return '<span class="delta-sub delta-flat">— vs last wk</span>';
+  const good = opts.invert ? d < 0 : d > 0;
+  return '<span class="delta-sub ' + (good ? 'delta-up' : 'delta-down') + '">' +
+    (d > 0 ? '▲ ' : '▼ ') + txt + ' vs last wk</span>';
+}
+
 function renderWeekly() {
   const prov = document.getElementById('wProvSel').value;
   const cat = document.getElementById('wCatSel').value;
@@ -573,6 +636,7 @@ function renderWeekly() {
     const start = addDays(curMon, -7 * i);
     weeks.push({ start, end: addDays(start, 6) });
   }
+  const nW = weeks.length;
 
   const rows = DATA.filter(r =>
     (!prov || r.p === prov) &&
@@ -592,41 +656,81 @@ function renderWeekly() {
     ['me','te','th'].forEach(f => r[f].forEach((v, i) => a[f][i] += v));
   });
 
+  // ---- KPI tiles: current week vs last week ----
+  const cur = agg[nW - 1], prev = agg[nW - 2];
+  const kpi = (label, val, delta, sub) =>
+    '<div class="kpi"><div class="k-label">' + label + '</div>' +
+    '<div class="k-val">' + val + '</div>' +
+    '<div class="k-delta">' + (delta || '<span class="delta-flat">–</span>') + '</div>' +
+    '<div class="k-sub">' + sub + '</div></div>';
+  const kd = (c, p, opts) => {
+    const html = deltaHtml(c, p, opts);
+    return html.replace('delta-sub ', '').replace(' vs last wk</span>', '</span> vs last week');
+  };
+  document.getElementById('weeklyKpis').innerHTML =
+    kpi('Consultations', fmtInt(cur.c), kd(cur.c, prev.c), 'current week (partial)') +
+    kpi('Conversion %', (pct(cur.cv, cur.c - cur.ne) ?? '–') + '%', kd(pct(cur.cv, cur.c - cur.ne), pct(prev.cv, prev.c - prev.ne), { pp: 1 }), 'converted ÷ eligible') +
+    kpi('Purchased Revenue', fmtMoney(cur.uv), kd(cur.uv, prev.uv), 'meds + tests + therapy') +
+    kpi('RPC', cur.c ? fmtMoney(cur.uv / cur.c) : '–', kd(cur.c ? cur.uv / cur.c : null, prev.c ? prev.uv / prev.c : null), 'revenue per consultation');
+
+  // ---- Table head ----
   document.getElementById('weeklyHead').innerHTML = '<tr><th class="h-metric">Metric</th>' +
     weeks.map((w, i) =>
-      '<th class="h-wk' + (i === weeks.length - 1 ? ' cur' : '') + '">' + weekLabel(w.start) +
-      (i === weeks.length - 1 ? '<span class="sub">current week</span>' : '') + '</th>'
-    ).join('') + '</tr>';
+      '<th class="h-wk' + (i === nW - 1 ? ' cur' : '') + '">' + weekLabel(w.start) +
+      (i === nW - 1 ? '<span class="sub">current week</span>' : '') + '</th>'
+    ).join('') + '<th class="h-wk trend">Trend</th></tr>';
 
-  const cell = (html, i) => '<td' + (i === weeks.length - 1 ? ' class="tot"' : '') + '>' + html + '</td>';
-  const row = (label, fn) => '<tr><td>' + label + '</td>' +
-    agg.map((a, i) => cell(fn(a), i)).join('') + '</tr>';
-  const section = name =>
-    '<tr class="section-row"><td colspan="' + (weeks.length + 1) + '">' + name + '</td></tr>';
+  // ---- Rows ----
+  const wRow = (sec, label, numFn, fmtFn, opts = {}) => {
+    const vals = agg.map(a => { const v = numFn(a); return v === null || !isFinite(v) ? null : v; });
+    const cells = agg.map((a, i) => {
+      const extra = i === nW - 1 ? deltaHtml(vals[i], vals[i - 1], opts) : '';
+      return '<td' + (i === nW - 1 ? ' class="tot"' : '') + ' title="' + weekLabel(weeks[i].start) + '">' +
+        fmtFn(a) + extra + '</td>';
+    }).join('');
+    return '<tr class="sec-' + sec + '">' + '<td>' + label + '</td>' + cells +
+      '<td>' + sparkline(vals) + '</td></tr>';
+  };
+  const section = (name, sec) =>
+    '<tr class="section-row" data-sec="' + sec + '"><td colspan="' + (nW + 2) + '">' +
+    '<span class="chev">▼</span>' + name + '</td></tr>';
 
-  const funnel = section('CONSULTATION TO PURCHASE FUNNEL') + [
-    row('Consultations Completed', a => '<span class="num">' + fmtInt(a.c) + '</span>'),
-    row('Eligible', a => '<span class="num">' + fmtInt(a.c - a.ne) + '</span>'),
-    row('Not Eligible %', a => pctPillNE(pct(a.ne, a.c))),
-    row('Avg Prescribed Value', a => '<span class="money">' + (a.c ? fmtMoney(a.pv / a.c) : '–') + '</span>'),
-    row('Converted', a => '<span class="num">' + fmtInt(a.cv) + '</span>'),
-    row('Conversion %', a => pctPillConv(pct(a.cv, a.c - a.ne))),
-    row('AOV', a => '<span class="money">' + (a.cv ? fmtMoney(a.uv / a.cv) : '–') + '</span>'),
-    row('RPC', a => '<span class="money">' + (a.c ? fmtMoney(a.uv / a.c) : '–') + '</span>')
+  const money = v => '<span class="money">' + (v === null || !isFinite(v) ? '–' : fmtMoney(v)) + '</span>';
+
+  const funnel = section('CONSULTATION TO PURCHASE FUNNEL', 'fun') + [
+    wRow('fun', 'Consultations Completed', a => a.c, a => '<span class="num">' + fmtInt(a.c) + '</span>'),
+    wRow('fun', 'Eligible', a => a.c - a.ne, a => '<span class="num">' + fmtInt(a.c - a.ne) + '</span>'),
+    wRow('fun', 'Not Eligible %', a => pct(a.ne, a.c), a => pctPillNE(pct(a.ne, a.c)), { pp: 1, invert: 1 }),
+    wRow('fun', 'Avg Prescribed Value', a => a.c ? a.pv / a.c : null, a => money(a.c ? a.pv / a.c : null)),
+    wRow('fun', 'Converted', a => a.cv, a => '<span class="num">' + fmtInt(a.cv) + '</span>'),
+    wRow('fun', 'Conversion %', a => pct(a.cv, a.c - a.ne), a => pctPillConv(pct(a.cv, a.c - a.ne)), { pp: 1 }),
+    wRow('fun', 'AOV', a => a.cv ? a.uv / a.cv : null, a => money(a.cv ? a.uv / a.cv : null)),
+    wRow('fun', 'RPC', a => a.c ? a.uv / a.c : null, a => money(a.c ? a.uv / a.c : null))
   ].join('');
 
-  const block = (name, f) => section(name) + [
-    row('Prescribed (no. of calls)', a => '<span class="num">' + fmtInt(a[f][0]) + '</span>'),
-    row('Prescription %', a => pill(pct(a[f][0], a.c) === null ? '–' : pct(a[f][0], a.c) + '%', 'mut')),
-    row('Avg Prescribed Value', a => '<span class="money">' + (a[f][0] ? fmtMoney(a[f][2] / a[f][0]) : '–') + '</span>'),
-    row('Converted', a => '<span class="num">' + fmtInt(a[f][1]) + '</span>'),
-    row('Conversion %', a => pctPillConv(pct(a[f][1], a[f][0]))),
-    row('AOV', a => '<span class="money">' + (a[f][1] ? fmtMoney(a[f][3] / a[f][1]) : '–') + '</span>'),
-    row('RPC', a => '<span class="money">' + (a.c ? fmtMoney(a[f][3] / a.c) : '–') + '</span>')
+  const block = (name, sec, f) => section(name, sec) + [
+    wRow(sec, 'Prescribed (no. of calls)', a => a[f][0], a => '<span class="num">' + fmtInt(a[f][0]) + '</span>'),
+    wRow(sec, 'Prescription %', a => pct(a[f][0], a.c), a => pill(pct(a[f][0], a.c) === null ? '–' : pct(a[f][0], a.c) + '%', 'mut'), { pp: 1 }),
+    wRow(sec, 'Avg Prescribed Value', a => a[f][0] ? a[f][2] / a[f][0] : null, a => money(a[f][0] ? a[f][2] / a[f][0] : null)),
+    wRow(sec, 'Converted', a => a[f][1], a => '<span class="num">' + fmtInt(a[f][1]) + '</span>'),
+    wRow(sec, 'Conversion %', a => pct(a[f][1], a[f][0]), a => pctPillConv(pct(a[f][1], a[f][0])), { pp: 1 }),
+    wRow(sec, 'AOV', a => a[f][1] ? a[f][3] / a[f][1] : null, a => money(a[f][1] ? a[f][3] / a[f][1] : null)),
+    wRow(sec, 'RPC', a => a.c ? a[f][3] / a.c : null, a => money(a.c ? a[f][3] / a.c : null))
   ].join('');
 
   document.getElementById('weeklyBody').innerHTML =
-    funnel + block('MEDS', 'me') + block('TESTS', 'te') + block('THERAPY', 'th');
+    funnel + block('MEDS', 'meds', 'me') + block('TESTS', 'tests', 'te') + block('THERAPY', 'ther', 'th');
+
+  // Collapsible sections
+  document.querySelectorAll('#weeklyBody tr.section-row').forEach(tr => {
+    tr.addEventListener('click', () => {
+      const sec = tr.dataset.sec;
+      const hide = !tr.classList.contains('collapsed');
+      tr.classList.toggle('collapsed', hide);
+      document.querySelectorAll('#weeklyBody tr.sec-' + sec).forEach(r =>
+        r.style.display = hide ? 'none' : '');
+    });
+  });
 }
 
 init();
