@@ -36,13 +36,12 @@
   th.h-wk.cur { background: var(--blue-soft); color: #2563eb; }
   th.h-wk.trend { border-radius: 0 10px 10px 0; }
 
-  /* Weekly view: KPI tiles */
-  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; margin: 16px 0 22px; }
-  .kpi { border: 1px solid var(--border); border-radius: 12px; padding: 14px 18px; background: #fafbfd; }
-  .kpi .k-label { font-size: 11px; font-weight: 600; color: var(--ink-2); text-transform: uppercase; letter-spacing: .05em; }
-  .kpi .k-val { font-size: 26px; font-weight: 700; margin: 4px 0 2px; }
-  .kpi .k-delta { font-size: 12px; font-weight: 600; }
-  .kpi .k-sub { font-size: 11px; color: var(--ink-3); font-weight: 400; }
+  /* Weekly view: insights panel */
+  .insights { border: 1px solid var(--border); border-radius: 12px; background: #fafbfd; padding: 16px 20px; margin: 16px 0 22px; }
+  .insights .i-title { font-size: 12px; font-weight: 600; color: var(--ink-2); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 10px; }
+  .insight { display: flex; gap: 10px; font-size: 13.5px; line-height: 1.55; margin: 7px 0; }
+  .insight .idot { width: 8px; height: 8px; border-radius: 50%; margin-top: 6px; flex: none; }
+  .idot.good { background: var(--green-bg); } .idot.bad { background: var(--red-bg); } .idot.neu { background: #94a3b8; }
   .delta-up { color: #16a34a; } .delta-down { color: #dc2626; } .delta-flat { color: var(--ink-3); }
 
   /* Weekly table: sticky metric column, hover, collapsible sections */
@@ -300,7 +299,7 @@
           <h1>Week on Week — Funnel &amp; Components</h1>
         </div>
       </div>
-      <div class="kpis" id="weeklyKpis"></div>
+      <div class="insights" id="weeklyInsights"></div>
       <div class="tbl-scroll">
         <table>
           <thead id="weeklyHead"></thead>
@@ -616,10 +615,87 @@ function deltaHtml(cur, prev, opts = {}) {
     d = Math.round((cur - prev) / prev * 100);
     txt = Math.abs(d) + '%';
   }
-  if (d === 0) return '<span class="delta-sub delta-flat">— vs last wk</span>';
+  if (d === 0) return '<span class="delta-sub delta-flat">— vs W-2</span>';
   const good = opts.invert ? d < 0 : d > 0;
   return '<span class="delta-sub ' + (good ? 'delta-up' : 'delta-down') + '">' +
-    (d > 0 ? '▲ ' : '▼ ') + txt + ' vs last wk</span>';
+    (d > 0 ? '▲ ' : '▼ ') + txt + ' vs W-2</span>';
+}
+
+// Rule-based insight bullets from the filtered weekly aggregates.
+// Anchored on W-1 (last completed week) vs W-2, with the completed weeks as context.
+function buildInsights(agg, nW) {
+  const W1 = agg[nW - 2], W2 = agg[nW - 3];
+  const done = agg.slice(0, nW - 1);            // completed weeks only
+  const item = (tone, html) =>
+    '<div class="insight"><span class="idot ' + tone + '"></span><span>' + html + '</span></div>';
+  const arrow = (d, unit) => d === 0 ? 'flat' :
+    '<span class="' + (d > 0 ? 'delta-up' : 'delta-down') + '">' + (d > 0 ? '▲' : '▼') + Math.abs(d) + unit + '</span>';
+  const chg = (cur, prev) => (prev > 0 && cur !== null) ? Math.round((cur - prev) / prev * 100) : null;
+  const conv = a => pct(a.cv, a.c - a.ne);
+  const out = ['<div class="i-title">Insights — last completed week (W-1) vs W-2</div>'];
+
+  if (!W1 || !W1.c) {
+    return out.join('') + item('neu', 'No consultations in the last completed week for this filter selection.');
+  }
+
+  // 1. Consultations completed
+  const dC = chg(W1.c, W2.c);
+  const hi = done.every(a => a.c <= W1.c), lo = done.every(a => a.c >= W1.c);
+  out.push(item(dC === null ? 'neu' : dC >= 0 ? 'good' : 'bad',
+    '<b>Consultations:</b> ' + fmtInt(W1.c) + ' completed in W-1' +
+    (dC === null ? '' : ' (' + arrow(dC, '%') + ' vs W-2)') +
+    (hi ? ' — the highest of the last ' + done.length + ' completed weeks.' :
+     lo ? ' — the lowest of the last ' + done.length + ' completed weeks.' : '.')));
+
+  // 2. Conversion (overall)
+  const c1 = conv(W1), c2 = conv(W2);
+  const avgConv = pct(done.reduce((s, a) => s + a.cv, 0), done.reduce((s, a) => s + a.c - a.ne, 0));
+  if (c1 !== null) {
+    const dpp = c2 !== null ? c1 - c2 : null;
+    out.push(item(dpp === null ? 'neu' : dpp >= 0 ? 'good' : 'bad',
+      '<b>Conversion:</b> ' + c1 + '% of eligible calls converted in W-1' +
+      (dpp === null ? '' : ' (' + arrow(dpp, ' pp') + ' vs W-2)') +
+      (avgConv !== null ? ', against a ' + avgConv + '% average across completed weeks.' : '.')));
+  }
+
+  // 3. RPC with driver attribution (conversion vs ticket size)
+  const r1 = W1.c ? W1.uv / W1.c : null, r2 = W2 && W2.c ? W2.uv / W2.c : null;
+  const a1 = W1.cv ? W1.uv / W1.cv : null, a2 = W2 && W2.cv ? W2.uv / W2.cv : null;
+  if (r1 !== null) {
+    const dR = chg(r1, r2), dA = chg(a1, a2);
+    let driver = '';
+    if (dR !== null && c1 !== null && c2 !== null && dA !== null) {
+      const dpp = c1 - c2;
+      if (dR < 0 && dpp > 0 && dA < 0) driver = ' — conversion improved but AOV fell ' + Math.abs(dA) + '%, dragging revenue per call';
+      else if (dR < 0 && dpp < 0 && dA > 0) driver = ' — AOV rose but fewer calls converted';
+      else if (dR > 0 && dpp > 0 && dA > 0) driver = ' — both conversion and AOV improved';
+      else if (dR < 0 && dpp < 0 && dA < 0) driver = ' — both conversion and AOV declined';
+    }
+    out.push(item(dR === null ? 'neu' : dR >= 0 ? 'good' : 'bad',
+      '<b>RPC:</b> ' + fmtMoney(r1) + ' per consultation in W-1' +
+      (dR === null ? '' : ' (' + arrow(dR, '%') + ' vs W-2)') + driver + '.'));
+  }
+
+  // 4-6. Components: prescription reach, conversion of prescribed calls, RPC share
+  const compNames = { me: 'Meds', te: 'Tests', th: 'Therapy' };
+  Object.entries(compNames).forEach(([f, name]) => {
+    const p1 = pct(W1[f][0], W1.c);
+    const cv1 = pct(W1[f][1], W1[f][0]);
+    const cv2 = W2 ? pct(W2[f][1], W2[f][0]) : null;
+    if (p1 === null || !W1[f][0]) {
+      out.push(item('neu', '<b>' + name + ':</b> not prescribed on any W-1 call in this selection.'));
+      return;
+    }
+    const dpp = (cv1 !== null && cv2 !== null) ? cv1 - cv2 : null;
+    const rpc = W1.c ? W1[f][3] / W1.c : null;
+    out.push(item(dpp === null ? 'neu' : dpp >= 0 ? 'good' : 'bad',
+      '<b>' + name + ':</b> prescribed on ' + p1 + '% of W-1 calls; ' +
+      (cv1 === null ? '–' : cv1 + '%') + ' of those purchased' +
+      (dpp === null ? '' : ' (' + arrow(dpp, ' pp') + ' vs W-2)') +
+      (rpc !== null ? ', contributing ' + fmtMoney(rpc) + ' RPC.' : '.')));
+  });
+
+  return out.join('');
 }
 
 function renderWeekly() {
@@ -656,22 +732,9 @@ function renderWeekly() {
     ['me','te','th'].forEach(f => r[f].forEach((v, i) => a[f][i] += v));
   });
 
-  // ---- KPI tiles: current week vs last week ----
-  const cur = agg[nW - 1], prev = agg[nW - 2];
-  const kpi = (label, val, delta, sub) =>
-    '<div class="kpi"><div class="k-label">' + label + '</div>' +
-    '<div class="k-val">' + val + '</div>' +
-    '<div class="k-delta">' + (delta || '<span class="delta-flat">–</span>') + '</div>' +
-    '<div class="k-sub">' + sub + '</div></div>';
-  const kd = (c, p, opts) => {
-    const html = deltaHtml(c, p, opts);
-    return html.replace('delta-sub ', '').replace(' vs last wk</span>', '</span> vs last week');
-  };
-  document.getElementById('weeklyKpis').innerHTML =
-    kpi('Consultations', fmtInt(cur.c), kd(cur.c, prev.c), 'current week (partial)') +
-    kpi('Conversion %', (pct(cur.cv, cur.c - cur.ne) ?? '–') + '%', kd(pct(cur.cv, cur.c - cur.ne), pct(prev.cv, prev.c - prev.ne), { pp: 1 }), 'converted ÷ eligible') +
-    kpi('Purchased Revenue', fmtMoney(cur.uv), kd(cur.uv, prev.uv), 'meds + tests + therapy') +
-    kpi('RPC', cur.c ? fmtMoney(cur.uv / cur.c) : '–', kd(cur.c ? cur.uv / cur.c : null, prev.c ? prev.uv / prev.c : null), 'revenue per consultation');
+  // ---- Auto insights: W-1 (last completed week) vs W-2 + 8-week context.
+  // W-0 is partial, so verdicts are always anchored on completed weeks. ----
+  document.getElementById('weeklyInsights').innerHTML = buildInsights(agg, nW);
 
   // ---- Table head ----
   document.getElementById('weeklyHead').innerHTML = '<tr><th class="h-metric">Metric</th>' +
@@ -685,7 +748,8 @@ function renderWeekly() {
   const wRow = (sec, label, numFn, fmtFn, opts = {}) => {
     const vals = agg.map(a => { const v = numFn(a); return v === null || !isFinite(v) ? null : v; });
     const cells = agg.map((a, i) => {
-      const extra = i === nW - 1 ? deltaHtml(vals[i], vals[i - 1], opts) : '';
+      // deltas live on W-1 (last completed week) vs W-2 — W-0 is partial
+      const extra = i === nW - 2 ? deltaHtml(vals[i], vals[i - 1], opts) : '';
       return '<td' + (i === nW - 1 ? ' class="tot"' : '') + ' title="' + weekLabel(weeks[i].start) + '">' +
         fmtFn(a) + extra + '</td>';
     }).join('');
