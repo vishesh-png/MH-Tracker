@@ -301,8 +301,9 @@ function init() {
     gDx.append(new Option(d, 'dx:' + d)));
   dSel.append(gDx);
 
-  const catOrder = ['MH Only', 'MH AND SH', 'SH only', 'Not Specified'];
+  const catOrder = ['MH Only', 'MH AND SH', 'Not Specified'];
   const cats = [...new Set(DATA.map(r => r.cat))]
+    .filter(c => c !== 'SH only')
     .sort((a, b) => catOrder.indexOf(a) - catOrder.indexOf(b));
   const cSel = document.getElementById('catSel');
   cats.forEach(c => cSel.append(new Option(c, c)));
