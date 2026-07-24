@@ -676,7 +676,8 @@ function renderWeekly() {
   // ---- Table head ----
   document.getElementById('weeklyHead').innerHTML = '<tr><th class="h-metric">Metric</th>' +
     weeks.map((w, i) =>
-      '<th class="h-wk' + (i === nW - 1 ? ' cur' : '') + '">' + weekLabel(w.start) +
+      '<th class="h-wk' + (i === nW - 1 ? ' cur' : '') + '">W-' + (nW - 1 - i) +
+      '<span class="sub">' + weekLabel(w.start) + '</span>' +
       (i === nW - 1 ? '<span class="sub">current week</span>' : '') + '</th>'
     ).join('') + '<th class="h-wk trend">Trend</th></tr>';
 
