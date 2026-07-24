@@ -44,11 +44,14 @@
   .idot.good { background: var(--green-bg); } .idot.bad { background: var(--red-bg); } .idot.neu { background: #94a3b8; }
   .delta-up { color: #16a34a; } .delta-down { color: #dc2626; } .delta-flat { color: var(--ink-3); }
 
-  /* Weekly table: sticky metric column, hover, collapsible sections */
+  /* Weekly table: scrollable region with sticky header + sticky metric column */
+  .tbl-scroll.wk { max-height: 76vh; overflow: auto; }
+  #weeklyHead th { position: sticky; top: 0; z-index: 3; }
   #weeklyHead th:first-child, #weeklyBody td:first-child {
     position: sticky; left: 0; z-index: 2; background: var(--card);
   }
-  #weeklyHead th:first-child { background: var(--green-head); }
+  #weeklyHead th:first-child { background: var(--green-head); z-index: 4; }
+  #weeklyBody tr.section-row td:first-child { white-space: normal; }
   #weeklyBody tr.section-row td { background: #e8edf5; cursor: pointer; user-select: none; }
   #weeklyBody tr.section-row:hover td { background: #dde5f0; }
   #weeklyBody tr:not(.section-row):hover td { background: #f3f7ff; }
@@ -300,7 +303,7 @@
         </div>
       </div>
       <div class="insights" id="weeklyInsights"></div>
-      <div class="tbl-scroll">
+      <div class="tbl-scroll wk">
         <table>
           <thead id="weeklyHead"></thead>
           <tbody id="weeklyBody"></tbody>
@@ -756,9 +759,11 @@ function renderWeekly() {
     return '<tr class="sec-' + sec + '">' + '<td>' + label + '</td>' + cells +
       '<td>' + sparkline(vals) + '</td></tr>';
   };
+  // Section label lives in the sticky Metric column only — a full-width colspan
+  // would run the title underneath the week columns.
   const section = (name, sec) =>
-    '<tr class="section-row" data-sec="' + sec + '"><td colspan="' + (nW + 2) + '">' +
-    '<span class="chev">▼</span>' + name + '</td></tr>';
+    '<tr class="section-row" data-sec="' + sec + '"><td>' +
+    '<span class="chev">▼</span>' + name + '</td><td colspan="' + (nW + 1) + '"></td></tr>';
 
   const money = v => '<span class="money">' + (v === null || !isFinite(v) ? '–' : fmtMoney(v)) + '</span>';
 
