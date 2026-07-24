@@ -25,6 +25,15 @@
     --shadow: 0 1px 3px rgba(16,24,40,.06), 0 1px 2px rgba(16,24,40,.04);
   }
   * { margin:0; padding:0; box-sizing:border-box; }
+  .tabbar { display: flex; gap: 8px; margin-bottom: 18px; }
+  .tab {
+    font-family: inherit; font-size: 14px; font-weight: 600; cursor: pointer;
+    padding: 10px 22px; border-radius: 10px; border: 1px solid var(--border);
+    background: var(--card); color: var(--ink-2);
+  }
+  .tab.active { background: #1f2937; color: #fff; border-color: #1f2937; }
+  th.h-wk { background: #eef1f6; font-size: 12.5px; white-space: nowrap; }
+  th.h-wk.cur { background: var(--blue-soft); color: #2563eb; border-radius: 0 10px 10px 0; }
   body {
     font-family:'Poppins', -apple-system, 'Segoe UI', sans-serif;
     background: var(--bg); color: var(--ink);
@@ -116,6 +125,13 @@
 </head>
 <body>
 <div class="wrap">
+
+  <div class="tabbar">
+    <button class="tab active" id="tabOverallBtn">Overall View</button>
+    <button class="tab" id="tabWeeklyBtn">Weekly View</button>
+  </div>
+
+  <div id="tab-overall">
 
   <div class="filter-card">
     <div class="range-label" id="rangeLabel">–</div>
@@ -231,6 +247,49 @@
     </div>
   </div>
 
+  </div><!-- /tab-overall -->
+
+  <div id="tab-weekly" style="display:none">
+
+    <div class="filter-card">
+      <div class="range-label">Last 8 Weeks</div>
+      <div class="filters">
+        <div class="field"><span class="lbl">Provider</span>
+          <select id="wProvSel"><option value="">All Providers</option></select></div>
+        <div class="field"><span class="lbl">Category (IS MH OR SH?)</span>
+          <select id="wCatSel"><option value="">All Categories</option></select></div>
+        <div class="field"><span class="lbl">Secondary Diagnosis (ICD)</span>
+          <select id="wDxSel"><option value="">All MH Diagnosis</option></select></div>
+        <div class="field"><span class="lbl">Consultation Type</span>
+          <select id="wChSel">
+            <option value="">All Types</option>
+            <option>Offline SC</option>
+            <option>Online SC</option>
+            <option>Repeat</option>
+          </select></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <div class="title-row">
+          <div class="title-icon" style="background:#0ea5e9">📅</div>
+          <h1>Week on Week — Funnel &amp; Components</h1>
+        </div>
+      </div>
+      <div class="tbl-scroll">
+        <table>
+          <thead id="weeklyHead"></thead>
+          <tbody id="weeklyBody"></tbody>
+        </table>
+      </div>
+      <div class="footer-note">
+        <span>Weeks run Monday–Sunday; the last column is the current week (partial). Purchases attributed to the consultation date, so recent weeks under-report conversion until purchases catch up.</span>
+      </div>
+    </div>
+
+  </div><!-- /tab-weekly -->
+
 </div>
 
 <script>
@@ -311,7 +370,40 @@ function init() {
   ['startDate','endDate','providerSel','catSel','dxSel','chSel'].forEach(id =>
     document.getElementById(id).addEventListener('change', render));
   document.getElementById('asOf').textContent = 'Data as of ' + AS_OF;
+
+  // Weekly-view filters share the same option lists
+  const wProv = document.getElementById('wProvSel');
+  provs.forEach(p => wProv.append(new Option(p, p)));
+  const wCat = document.getElementById('wCatSel');
+  cats.forEach(c => wCat.append(new Option(c, c)));
+  const wDx = document.getElementById('wDxSel');
+  const wgCo = document.createElement('optgroup');
+  wgCo.label = 'Cohorts';
+  [COHORT_ADG, COHORT_ADG_PLUS, COHORT_OTHERS, COHORT_NS].forEach(c =>
+    wgCo.append(new Option(c, 'co:' + c)));
+  wDx.append(wgCo);
+  const wgDx = document.createElement('optgroup');
+  wgDx.label = 'Individual diagnosis';
+  [...new Set(DATA.flatMap(r => r.dx))].sort().forEach(d =>
+    wgDx.append(new Option(d, 'dx:' + d)));
+  wDx.append(wgDx);
+  ['wProvSel','wCatSel','wDxSel','wChSel'].forEach(id =>
+    document.getElementById(id).addEventListener('change', renderWeekly));
+
+  // Tabs
+  const tabs = [
+    { btn: 'tabOverallBtn', pane: 'tab-overall' },
+    { btn: 'tabWeeklyBtn', pane: 'tab-weekly' }
+  ];
+  tabs.forEach(t => document.getElementById(t.btn).addEventListener('click', () => {
+    tabs.forEach(o => {
+      document.getElementById(o.btn).classList.toggle('active', o === t);
+      document.getElementById(o.pane).style.display = o === t ? '' : 'none';
+    });
+  }));
+
   render();
+  renderWeekly();
 }
 
 function render() {
@@ -447,6 +539,94 @@ function renderCohorts(s, e, prov, cat) {
   }).join('');
 
   document.getElementById('cohortBody').innerHTML = html;
+}
+
+// ---------- Weekly view ----------
+function addDays(iso, n) {
+  // format in local time — toISOString() would shift the date on non-UTC machines
+  const d = new Date(iso + 'T00:00:00');
+  d.setDate(d.getDate() + n);
+  const p = x => String(x).padStart(2, '0');
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+}
+function mondayOf(iso) {
+  const d = new Date(iso + 'T00:00:00');
+  return addDays(iso, -((d.getDay() + 6) % 7));
+}
+function weekLabel(startIso) {
+  const opts = { day: '2-digit', month: 'short' };
+  const f = i => new Date(i + 'T00:00:00').toLocaleDateString('en-GB', opts);
+  return f(startIso) + ' – ' + f(addDays(startIso, 6));
+}
+
+function renderWeekly() {
+  const prov = document.getElementById('wProvSel').value;
+  const cat = document.getElementById('wCatSel').value;
+  const dx = document.getElementById('wDxSel').value;
+  const ch = document.getElementById('wChSel').value;
+
+  const maxDate = DATA.reduce((m, r) => r.d > m ? r.d : m, '');
+  const curMon = mondayOf(maxDate);
+  // last 8 weeks, oldest first; last column = current week
+  const weeks = [];
+  for (let i = 7; i >= 0; i--) {
+    const start = addDays(curMon, -7 * i);
+    weeks.push({ start, end: addDays(start, 6) });
+  }
+
+  const rows = DATA.filter(r =>
+    (!prov || r.p === prov) &&
+    (!cat || r.cat === cat) &&
+    (!ch || r.ch === ch) &&
+    (!dx ||
+      (dx.startsWith('co:') && r.co === dx.slice(3)) ||
+      (dx.startsWith('dx:') && r.dx.includes(dx.slice(3))))
+  );
+
+  const agg = weeks.map(() => ({ c:0, ne:0, cv:0, pv:0, uv:0, me:[0,0,0,0], te:[0,0,0,0], th:[0,0,0,0] }));
+  rows.forEach(r => {
+    const wi = weeks.findIndex(w => r.d >= w.start && r.d <= w.end);
+    if (wi < 0) return;
+    const a = agg[wi];
+    a.c += r.c; a.ne += r.ne; a.cv += r.cv; a.pv += r.pv; a.uv += r.uv;
+    ['me','te','th'].forEach(f => r[f].forEach((v, i) => a[f][i] += v));
+  });
+
+  document.getElementById('weeklyHead').innerHTML = '<tr><th class="h-metric">Metric</th>' +
+    weeks.map((w, i) =>
+      '<th class="h-wk' + (i === weeks.length - 1 ? ' cur' : '') + '">' + weekLabel(w.start) +
+      (i === weeks.length - 1 ? '<span class="sub">current week</span>' : '') + '</th>'
+    ).join('') + '</tr>';
+
+  const cell = (html, i) => '<td' + (i === weeks.length - 1 ? ' class="tot"' : '') + '>' + html + '</td>';
+  const row = (label, fn) => '<tr><td>' + label + '</td>' +
+    agg.map((a, i) => cell(fn(a), i)).join('') + '</tr>';
+  const section = name =>
+    '<tr class="section-row"><td colspan="' + (weeks.length + 1) + '">' + name + '</td></tr>';
+
+  const funnel = section('CONSULTATION TO PURCHASE FUNNEL') + [
+    row('Consultations Completed', a => '<span class="num">' + fmtInt(a.c) + '</span>'),
+    row('Eligible', a => '<span class="num">' + fmtInt(a.c - a.ne) + '</span>'),
+    row('Not Eligible %', a => pctPillNE(pct(a.ne, a.c))),
+    row('Avg Prescribed Value', a => '<span class="money">' + (a.c ? fmtMoney(a.pv / a.c) : '–') + '</span>'),
+    row('Converted', a => '<span class="num">' + fmtInt(a.cv) + '</span>'),
+    row('Conversion %', a => pctPillConv(pct(a.cv, a.c - a.ne))),
+    row('AOV', a => '<span class="money">' + (a.cv ? fmtMoney(a.uv / a.cv) : '–') + '</span>'),
+    row('RPC', a => '<span class="money">' + (a.c ? fmtMoney(a.uv / a.c) : '–') + '</span>')
+  ].join('');
+
+  const block = (name, f) => section(name) + [
+    row('Prescribed (no. of calls)', a => '<span class="num">' + fmtInt(a[f][0]) + '</span>'),
+    row('Prescription %', a => pill(pct(a[f][0], a.c) === null ? '–' : pct(a[f][0], a.c) + '%', 'mut')),
+    row('Avg Prescribed Value', a => '<span class="money">' + (a[f][0] ? fmtMoney(a[f][2] / a[f][0]) : '–') + '</span>'),
+    row('Converted', a => '<span class="num">' + fmtInt(a[f][1]) + '</span>'),
+    row('Conversion %', a => pctPillConv(pct(a[f][1], a[f][0]))),
+    row('AOV', a => '<span class="money">' + (a[f][1] ? fmtMoney(a[f][3] / a[f][1]) : '–') + '</span>'),
+    row('RPC', a => '<span class="money">' + (a.c ? fmtMoney(a[f][3] / a.c) : '–') + '</span>')
+  ].join('');
+
+  document.getElementById('weeklyBody').innerHTML =
+    funnel + block('MEDS', 'me') + block('TESTS', 'te') + block('THERAPY', 'th');
 }
 
 init();
