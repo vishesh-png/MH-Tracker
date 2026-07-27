@@ -25,6 +25,14 @@
     --shadow: 0 1px 3px rgba(16,24,40,.06), 0 1px 2px rgba(16,24,40,.04);
   }
   * { margin:0; padding:0; box-sizing:border-box; }
+  .update-banner {
+    display: none; position: fixed; top: 14px; left: 50%; transform: translateX(-50%);
+    z-index: 100; align-items: center; gap: 12px;
+    background: #1f2937; color: #fff; font-size: 13.5px; font-weight: 500;
+    padding: 11px 18px; border-radius: 12px; box-shadow: 0 6px 20px rgba(16,24,40,.25);
+    cursor: pointer;
+  }
+  .update-banner b { color: #7dd3a7; }
   .tabbar { display: flex; gap: 8px; margin-bottom: 18px; }
   .tab {
     font-family: inherit; font-size: 14px; font-weight: 600; cursor: pointer;
@@ -150,6 +158,10 @@
 </head>
 <body>
 <div class="wrap">
+
+  <div class="update-banner" id="updateBanner" title="Click to reload">
+    <span><b>Newer data available</b> — click to refresh the dashboard</span>
+  </div>
 
   <div class="tabbar">
     <button class="tab active" id="tabOverallBtn">Overall View</button>
@@ -829,6 +841,23 @@ function renderWeekly() {
 }
 
 init();
+
+// ---------- Freshness check ----------
+// A long-lived tab (or browser cache) can keep showing an old snapshot after a
+// newer one was published. Re-fetch this page bypassing the cache, compare the
+// embedded AS_OF stamp, and offer a one-click reload when it differs.
+async function checkFresh() {
+  try {
+    const res = await fetch(location.pathname + '?fresh=' + Date.now(), { cache: 'no-store' });
+    if (!res.ok) return;
+    const m = (await res.text()).match(/^const AS_OF = "([^"]*)"/m);
+    if (m && m[1] !== AS_OF) document.getElementById('updateBanner').style.display = 'flex';
+  } catch (e) { /* offline etc. — try again later */ }
+}
+document.getElementById('updateBanner').addEventListener('click', () => location.reload());
+document.addEventListener('visibilitychange', () => { if (!document.hidden) checkFresh(); });
+setInterval(checkFresh, 10 * 60 * 1000);
+checkFresh();
 </script>
 </body>
 </html>
