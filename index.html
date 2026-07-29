@@ -50,6 +50,18 @@
   .insight { display: flex; gap: 10px; font-size: 13.5px; line-height: 1.55; margin: 7px 0; }
   .insight .idot { width: 8px; height: 8px; border-radius: 50%; margin-top: 6px; flex: none; }
   .idot.good { background: var(--green-bg); } .idot.bad { background: var(--red-bg); } .idot.neu { background: #94a3b8; }
+
+  /* Component-tab insight bars */
+  .icols { display: grid; grid-template-columns: 1fr 1fr; gap: 26px; }
+  @media (max-width: 980px) { .icols { grid-template-columns: 1fr; } }
+  .icol-h { font-size: 13.5px; font-weight: 600; margin-bottom: 2px; }
+  .icol-sub { display: block; font-size: 12px; font-weight: 400; color: var(--ink-2); margin: 2px 0 10px; }
+  .rbar-row { display: flex; align-items: center; gap: 10px; margin: 5px 0; font-size: 12.5px; }
+  .rbar-label { flex: 0 0 46%; color: #4b5563; line-height: 1.3; }
+  .rbar-track { flex: 1; background: #edf0f5; border-radius: 5px; height: 10px; overflow: hidden; }
+  .rbar-fill { height: 100%; border-radius: 5px; }
+  .rbar-n { flex: 0 0 84px; text-align: right; color: var(--ink-2); white-space: nowrap; }
+  .rbar-n b { color: var(--ink); }
   .delta-up { color: #16a34a; } .delta-down { color: #dc2626; } .delta-flat { color: var(--ink-3); }
 
   /* Weekly table: scrollable region with sticky header + sticky metric column */
@@ -957,56 +969,66 @@ function buildComponentTabs(provs, cats, dxFill) {
   });
 }
 
-// Insights for a component tab: which reasons drive not-prescribing (doctor side)
-// and not-purchasing (patient side) over the visible 8 weeks, with contribution
-// shares, plus how much of the funnel has no reason captured at all.
-function compInsights(cfg, cTot, pTot, npTot, ncTot, trees) {
-  const item = (tone, html) =>
-    '<div class="insight"><span class="idot ' + tone + '"></span><span>' + html + '</span></div>';
-  const out = ['<div class="i-title">Insights — last 8 weeks (follows the filters above)</div>'];
+// Group messy free-text reasons into clean canonical buckets so near-identical
+// answers ("pt has meds" / "Medicines remaining" / "Patient has medicines
+// remaining") count as ONE driver instead of splitting the picture.
+// Order matters: more specific patterns first.
+function bucketNP(s) {
+  const v = s.toLowerCase();
+  if (/prefer to prescribe in fu|follow.?up|defer|reassess/.test(v)) return 'Prefers to prescribe at follow-up';
+  if (/await|test result/.test(v)) return 'Awaiting test results';
+  if (/has med|medicine.*remain|meds remain|already prescribed|has prescription|already has|equivalent medication|has it/.test(v)) return 'Patient already has medicines';
+  if (/treated|no issues|counsel|no treatment/.test(v)) return 'Patient treated / no treatment needed';
+  if (/^rr\b|report read|^pq\b|quer|^ne\b|n\/e|not eligible\.?$/.test(v)) return 'Report-reading / query / NE call';
+  if (/not willing|refus|believe|not interested|declin|not comfortable/.test(v)) return 'Patient not willing';
+  if (/not clinically indicated|not eligible for|clinical diagnosis sufficient|not relevant|not require|not needed|lifestyle/.test(v)) return 'Not clinically indicated';
+  if (/therapist outside|seeing a therapist|therapy.*outside/.test(v)) return 'Already in therapy outside';
+  if (/refer|specialist|urolog|dermat|andro|in.?person/.test(v)) return 'Referred out / needs specialist';
+  if (/afford|budget|price|money|expense/.test(v)) return 'Affordability concerns';
+  if (/contraindication|allerg|adverse|side effect/.test(v)) return 'Contraindication / side effects';
+  return 'Other reasons';
+}
+function bucketNC(s) {
+  const v = s.toLowerCase();
+  if (/budget|price|afford|expensive|enough money|noney/.test(v)) return 'Budget / price concerns';
+  if (/known pharmacy|from outside|purchase.*outside|buy from/.test(v)) return 'Will buy from outside';
+  if (/stock/.test(v)) return 'Stock unavailable';
+  if (/already has|has some|has med|already brought|1 pending/.test(v)) return 'Already has medicines / pending order';
+  if (/check if|try medicine|works|suits|few days/.test(v)) return 'Wants to try meds first';
+  if (/optional/.test(v)) return 'Doctor marked it optional';
+  if (/believe|not interested|don.?t want|not required/.test(v)) return 'Not interested / doesn’t believe in it';
+  if (/therap.*outside|has a therapist|done from outside|done outside/.test(v)) return 'Getting it done outside';
+  if (/test report|after.*report|reports/.test(v)) return 'Waiting for test reports';
+  if (/buy later|later|needs? time|think|discuss|schedule not clear|will pay|next week|decide|week later|book later/.test(v)) return 'Wants to buy later / needs time';
+  return 'Other reasons';
+}
 
-  const topReasons = tree => {
-    const names = Object.keys(tree.l1).sort((a, b) => tree.l1[b].tot - tree.l1[a].tot);
-    const totMentions = names.reduce((s, n) => s + tree.l1[n].tot, 0);
-    return { names, totMentions };
+// Side-by-side ranked bars: doctor side (why not prescribed) vs patient side
+// (why not purchased), with "No reason captured" shown honestly as its own bar.
+function compInsights(cfg, cTot, pTot, npTot, ncTot, buckets) {
+  const col = (title, sub, map, denom, color) => {
+    const names = Object.keys(map).filter(n => n !== '__none__')
+      .sort((a, b) => map[b] - map[a]).slice(0, 7);
+    const max = Math.max(1, map.__none__ || 0, ...names.map(n => map[n]));
+    const bar = (label, n, fill) =>
+      '<div class="rbar-row"><div class="rbar-label">' + label + '</div>' +
+      '<div class="rbar-track"><div class="rbar-fill" style="width:' + Math.round(n / max * 100) + '%;background:' + fill + '"></div></div>' +
+      '<div class="rbar-n"><b>' + fmtInt(n) + '</b> · ' + (pct(n, denom) ?? 0) + '%</div></div>';
+    return '<div><div class="icol-h">' + title + '</div><span class="icol-sub">' + sub + '</span>' +
+      (denom === 0 ? '<span class="icol-sub">Nothing in this selection.</span>' :
+        names.map(n => bar(n, map[n], color)).join('') +
+        (map.__none__ ? bar('No reason captured', map.__none__, '#c3cad6') : '')) +
+      '</div>';
   };
-  const callsWord = n => fmtInt(n) + (n === 1 ? ' call' : ' calls');
-  const describe = (tree, names, totMentions, k) => names.slice(0, k).map(n => {
-    const node = tree.l1[n];
-    const kids = Object.keys(node.kids).sort((a, b) => node.kids[b].tot - node.kids[a].tot);
-    const sub = kids.length ? ' (mostly “' + kids[0] + '”)' : '';
-    return '“' + n + '” — ' + callsWord(node.tot) + ', ~' + pct(node.tot, totMentions) + '% of recorded reasons' + sub;
-  }).join('; ');
-
-  // Doctor side: why not prescribed
-  if (npTot > 0) {
-    const t = trees[cfg.np];
-    const anyTot = t.any.reduce((s, v) => s + v, 0);
-    const { names, totMentions } = topReasons(t);
-    const noReason = Math.max(0, npTot - anyTot);
-    let html = '<b>Why doctors don’t prescribe ' + cfg.noun.toLowerCase() + ':</b> not prescribed on ' +
-      fmtInt(npTot) + ' of ' + fmtInt(cTot) + ' calls (' + pct(npTot, cTot) + '%).';
-    if (totMentions > 0) html += ' Biggest recorded drivers: ' + describe(t, names, totMentions, 3) + '.';
-    if (noReason > 0) html += ' <b>' + fmtInt(noReason) + ' calls (' + pct(noReason, npTot) + '%) have no reason captured.</b>';
-    out.push(item(pct(npTot, cTot) > 50 ? 'bad' : 'neu', html));
-  }
-
-  // Patient side: why not purchased
-  if (ncTot > 0) {
-    const t = trees[cfg.nc];
-    const anyTot = t.any.reduce((s, v) => s + v, 0);
-    const { names, totMentions } = topReasons(t);
-    const noReason = Math.max(0, ncTot - anyTot);
-    let html = '<b>Why patients don’t purchase ' + cfg.noun.toLowerCase() + ':</b> ' +
-      fmtInt(ncTot) + ' of ' + fmtInt(pTot) + ' prescribed calls didn’t convert (' + pct(ncTot, pTot) + '%).';
-    if (totMentions > 0) html += ' Biggest recorded drivers: ' + describe(t, names, totMentions, 3) + '.';
-    if (noReason > 0) html += ' ' + fmtInt(noReason) + ' calls (' + pct(noReason, ncTot) + '%) have no reason captured.';
-    out.push(item(pct(ncTot, pTot) > 50 ? 'bad' : 'neu', html));
-  }
-
-  if (npTot === 0 && ncTot === 0)
-    out.push(item('neu', 'No not-prescribed or not-converted calls in this selection.'));
-  return out.join('');
+  return '<div class="i-title">Why — last 8 weeks (follows the filters above; % of the leaked calls)</div>' +
+    '<div class="icols">' +
+    col('🩺 Why doctors don’t prescribe ' + cfg.noun.toLowerCase(),
+      fmtInt(npTot) + ' of ' + fmtInt(cTot) + ' calls (' + (pct(npTot, cTot) ?? 0) + '%) had no ' + cfg.noun.toLowerCase() + ' prescribed',
+      buckets.np, npTot, '#f59e0b') +
+    col('🛒 Why patients don’t purchase ' + cfg.noun.toLowerCase(),
+      fmtInt(ncTot) + ' of ' + fmtInt(pTot) + ' prescribed calls (' + (pct(ncTot, pTot) ?? 0) + '%) didn’t buy',
+      buckets.nc, ncTot, '#2563eb') +
+    '</div>';
 }
 
 function renderCTab(cfg) {
@@ -1043,11 +1065,14 @@ function renderCTab(cfg) {
   // reason trees: kind -> { any: [wk], l1: { name -> { tot, w:[wk], kids: { name -> {tot, w:[wk]} } } } }
   const trees = {};
   [cfg.np, cfg.nc].forEach(k => trees[k] = { any: Array(nW).fill(0), l1: {} });
+  const WPLABEL = 'Didn’t purchase anything (whole-plan reason)';
+  const buckets = { np: {}, nc: {} };
   REASONS.filter(r => (r.k === cfg.np || r.k === cfg.nc) && match(r)).forEach(r => {
     const wi = wIdx(r.d);
     if (wi < 0) return;
     const t = trees[r.k];
     if (r.v === '__ANY__') { t.any[wi] += r.n; return; }
+    const side = r.k === cfg.np ? 'np' : 'nc';
     reasonEntries(r.v).forEach(e => {
       const n1 = t.l1[e.l1] = t.l1[e.l1] || { tot: 0, w: Array(nW).fill(0), kids: {} };
       n1.tot += r.n; n1.w[wi] += r.n;
@@ -1055,14 +1080,24 @@ function renderCTab(cfg) {
         const n2 = n1.kids[e.l2] = n1.kids[e.l2] || { tot: 0, w: Array(nW).fill(0) };
         n2.tot += r.n; n2.w[wi] += r.n;
       }
+      // canonical bucket for the insight bars; whole-plan opt-outs classified
+      // by their underlying reason, not the wrapper label
+      const txt = e.l1 === WPLABEL ? (e.l2 || '') : e.l1 + ' ' + (e.l2 || '');
+      const b = side === 'np' ? bucketNP(txt) : bucketNC(txt);
+      buckets[side][b] = (buckets[side][b] || 0) + r.n;
     });
   });
 
   {
     const cTot = agg.reduce((s, a) => s + a.c, 0), pTot = agg.reduce((s, a) => s + a.p, 0);
     const cvTot = agg.reduce((s, a) => s + a.cv, 0);
+    const npTot = cTot - pTot, ncTot = pTot - cvTot;
+    const anyNp = trees[cfg.np].any.reduce((s, v) => s + v, 0);
+    const anyNc = trees[cfg.nc].any.reduce((s, v) => s + v, 0);
+    if (npTot - anyNp > 0) buckets.np.__none__ = npTot - anyNp;
+    if (ncTot - anyNc > 0) buckets.nc.__none__ = ncTot - anyNc;
     document.getElementById(cfg.id + 'Insights').innerHTML =
-      compInsights(cfg, cTot, pTot, cTot - pTot, pTot - cvTot, trees);
+      compInsights(cfg, cTot, pTot, npTot, ncTot, buckets);
   }
 
   document.getElementById(cfg.id + 'Head').innerHTML = '<tr><th class="h-metric">Metric</th>' +
