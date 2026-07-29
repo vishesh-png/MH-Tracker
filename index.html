@@ -1049,17 +1049,21 @@ function renderCTab(cfg) {
 
   const cArr = agg.map(a => a.c), pArr = agg.map(a => a.p), cvArr = agg.map(a => a.cv);
   const npArr = agg.map(a => a.c - a.p), ncArr = agg.map(a => a.p - a.cv);
-  const presPct = agg.map(a => pct(a.p, a.c)), convPct = agg.map(a => pct(a.cv, a.p));
+  const npPct = agg.map(a => pct(a.c - a.p, a.c));    // not prescribed ÷ total calls
+  const ncPct = agg.map(a => pct(a.p - a.cv, a.p));   // not converted ÷ prescribed calls
+  // lower is better: complement of the conversion pill thresholds
+  const invPill = v => v === null ? pill('–', 'mut') :
+    pill(v + '%', v <= 30 ? 'grn' : v <= 50 ? 'yel' : 'red');
 
   document.getElementById(cfg.id + 'Body').innerHTML =
     mainRow('Total Calls Done', cArr, num) +
     mainRow('Calls with ' + cfg.noun + ' Prescribed', pArr, num) +
-    mainRow('Prescription %', presPct, v => pill(v === null ? '–' : v + '%', 'mut')) +
     mainRow('<span class="chev">▼</span>Not Prescribed <span class="sub">click for reasons</span>', npArr, num, 'expander') +
+    mainRow('Not Prescribed %', npPct, v => pill(v === null ? '–' : v + '%', 'mut')) +
     reasonRows('np', trees[cfg.np], npArr) +
     mainRow('Converted (purchased)', cvArr, num) +
-    mainRow('Conversion %', convPct, pctPillConv) +
     mainRow('<span class="chev">▼</span>Not Converted <span class="sub">click for reasons</span>', ncArr, num, 'expander') +
+    mainRow('Not Converted %', ncPct, invPill) +
     reasonRows('nc', trees[cfg.nc], ncArr);
 
   const body = document.getElementById(cfg.id + 'Body');
