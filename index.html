@@ -941,6 +941,7 @@ function buildComponentTabs(provs, cats, dxFill) {
         '<div class="card-head"><div class="title-row">' +
           '<div class="title-icon" style="background:' + cfg.color + '">' + cfg.icon + '</div>' +
           '<h1>' + cfg.noun + ' — Week on Week</h1></div></div>' +
+        '<div class="insights" id="' + cfg.id + 'Insights"></div>' +
         '<div class="tbl-scroll wk"><table><thead id="' + cfg.id + 'Head"></thead><tbody id="' + cfg.id + 'Body"></tbody></table></div>' +
         '<div class="footer-note"><span>Click the Not Prescribed / Not Converted rows to expand the reasons behind them (click a reason with ▶ for its sub-reasons). ' +
         'Not-prescribed reasons come from the doctor’s prescription form; not-converted reasons from patient opt-outs. ' +
@@ -954,6 +955,58 @@ function buildComponentTabs(provs, cats, dxFill) {
       document.getElementById(cfg.id + s).addEventListener('change', () => renderCTab(cfg)));
     renderCTab(cfg);
   });
+}
+
+// Insights for a component tab: which reasons drive not-prescribing (doctor side)
+// and not-purchasing (patient side) over the visible 8 weeks, with contribution
+// shares, plus how much of the funnel has no reason captured at all.
+function compInsights(cfg, cTot, pTot, npTot, ncTot, trees) {
+  const item = (tone, html) =>
+    '<div class="insight"><span class="idot ' + tone + '"></span><span>' + html + '</span></div>';
+  const out = ['<div class="i-title">Insights — last 8 weeks (follows the filters above)</div>'];
+
+  const topReasons = tree => {
+    const names = Object.keys(tree.l1).sort((a, b) => tree.l1[b].tot - tree.l1[a].tot);
+    const totMentions = names.reduce((s, n) => s + tree.l1[n].tot, 0);
+    return { names, totMentions };
+  };
+  const callsWord = n => fmtInt(n) + (n === 1 ? ' call' : ' calls');
+  const describe = (tree, names, totMentions, k) => names.slice(0, k).map(n => {
+    const node = tree.l1[n];
+    const kids = Object.keys(node.kids).sort((a, b) => node.kids[b].tot - node.kids[a].tot);
+    const sub = kids.length ? ' (mostly “' + kids[0] + '”)' : '';
+    return '“' + n + '” — ' + callsWord(node.tot) + ', ~' + pct(node.tot, totMentions) + '% of recorded reasons' + sub;
+  }).join('; ');
+
+  // Doctor side: why not prescribed
+  if (npTot > 0) {
+    const t = trees[cfg.np];
+    const anyTot = t.any.reduce((s, v) => s + v, 0);
+    const { names, totMentions } = topReasons(t);
+    const noReason = Math.max(0, npTot - anyTot);
+    let html = '<b>Why doctors don’t prescribe ' + cfg.noun.toLowerCase() + ':</b> not prescribed on ' +
+      fmtInt(npTot) + ' of ' + fmtInt(cTot) + ' calls (' + pct(npTot, cTot) + '%).';
+    if (totMentions > 0) html += ' Biggest recorded drivers: ' + describe(t, names, totMentions, 3) + '.';
+    if (noReason > 0) html += ' <b>' + fmtInt(noReason) + ' calls (' + pct(noReason, npTot) + '%) have no reason captured.</b>';
+    out.push(item(pct(npTot, cTot) > 50 ? 'bad' : 'neu', html));
+  }
+
+  // Patient side: why not purchased
+  if (ncTot > 0) {
+    const t = trees[cfg.nc];
+    const anyTot = t.any.reduce((s, v) => s + v, 0);
+    const { names, totMentions } = topReasons(t);
+    const noReason = Math.max(0, ncTot - anyTot);
+    let html = '<b>Why patients don’t purchase ' + cfg.noun.toLowerCase() + ':</b> ' +
+      fmtInt(ncTot) + ' of ' + fmtInt(pTot) + ' prescribed calls didn’t convert (' + pct(ncTot, pTot) + '%).';
+    if (totMentions > 0) html += ' Biggest recorded drivers: ' + describe(t, names, totMentions, 3) + '.';
+    if (noReason > 0) html += ' ' + fmtInt(noReason) + ' calls (' + pct(noReason, ncTot) + '%) have no reason captured.';
+    out.push(item(pct(ncTot, pTot) > 50 ? 'bad' : 'neu', html));
+  }
+
+  if (npTot === 0 && ncTot === 0)
+    out.push(item('neu', 'No not-prescribed or not-converted calls in this selection.'));
+  return out.join('');
 }
 
 function renderCTab(cfg) {
@@ -1004,6 +1057,13 @@ function renderCTab(cfg) {
       }
     });
   });
+
+  {
+    const cTot = agg.reduce((s, a) => s + a.c, 0), pTot = agg.reduce((s, a) => s + a.p, 0);
+    const cvTot = agg.reduce((s, a) => s + a.cv, 0);
+    document.getElementById(cfg.id + 'Insights').innerHTML =
+      compInsights(cfg, cTot, pTot, cTot - pTot, pTot - cvTot, trees);
+  }
 
   document.getElementById(cfg.id + 'Head').innerHTML = '<tr><th class="h-metric">Metric</th>' +
     weeks.map((w, i) =>
