@@ -912,6 +912,10 @@ function reasonEntries(v) {
       }));
     } catch (e) { /* fall through to text parsing */ }
   }
+  // Whole-encounter opt-out: patient declined the entire prescription (all items),
+  // with one reason recorded for the whole plan rather than per item.
+  if (v.startsWith('Entire prescription - '))
+    return [{ l1: 'Didn’t purchase anything (whole-plan reason)', l2: v.slice(22).trim() }];
   const m = v.match(/^others?\s*:\s*(.*)$/i);
   if (m) return [{ l1: 'Others', l2: m[1].trim() || '(unspecified)' }];
   const i = v.indexOf(' - ');
